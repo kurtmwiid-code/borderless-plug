@@ -28,54 +28,9 @@ interface EditForm {
   customModifier: string;
 }
 
-// Mock Supabase data - replace with actual Supabase connection
-const mockSupabaseData = {
-  jobsNeedingReview: [
-    {
-      id: 1,
-      job_url: 'https://recruitcrm.io/jobs/executive-assistant-tech-startup',
-      extracted_title: 'Executive Assistant Tech Startup',
-      suggested_category: 'Virtual Assistant',
-      confidence_score: 75,
-      needs_review: true,
-      review_reason: 'Similar titles categorized differently before',
-      created_at: '2025-09-16T10:30:00Z'
-    },
-    {
-      id: 2,
-      job_url: 'https://weworkremotely.com/remote-jobs/sales-development-representative-saas',
-      extracted_title: 'Sales Development Representative Saas',
-      suggested_category: 'Sales',
-      confidence_score: 90,
-      needs_review: true,
-      review_reason: 'New job pattern detected',
-      created_at: '2025-09-16T09:15:00Z'
-    },
-    {
-      id: 3,
-      job_url: 'https://remoteok.io/remote-dev-jobs/python-developer-fintech',
-      extracted_title: 'Python Developer Fintech',
-      suggested_category: 'I.T.',
-      confidence_score: 45,
-      needs_review: true,
-      review_reason: 'Low confidence categorization',
-      created_at: '2025-09-16T08:45:00Z'
-    }
-  ] as JobToReview[],
-  
-  learnedTitles: [
-    { base_title: 'Executive Assistant', modifier: 'Tech', full_display_title: 'Executive Assistant (Tech)' },
-    { base_title: 'Executive Assistant', modifier: 'Healthcare', full_display_title: 'Executive Assistant (Healthcare)' },
-    { base_title: 'Sales Development Rep', modifier: 'SaaS', full_display_title: 'Sales Development Rep (SaaS)' },
-    { base_title: 'Virtual Assistant', modifier: 'E-commerce', full_display_title: 'Virtual Assistant (E-commerce)' },
-    { base_title: 'Customer Success Manager', modifier: 'Startup', full_display_title: 'Customer Success Manager (Startup)' }
-  ] as LearnedTitle[],
-  
-  quickModifiers: [
-    'Tech', 'SaaS', 'Healthcare', 'Finance', 'E-commerce', 'Startup', 'Enterprise', 
-    'Remote', '5+ Years', 'Entry Level', 'Senior', 'Lead', 'Manager'
-  ] as string[]
-};
+interface MobileAdminPanelProps {
+  problematicJobs?: any[]; // Real jobs passed from parent
+}
 
 const CATEGORIES = [
   'I.T.', 'Sales', 'Virtual Assistant', 'Customer Service', 
@@ -89,7 +44,7 @@ const THEME = {
   goldLight: '#f6e8a3'
 };
 
-const MobileAdminPanel: React.FC = () => {
+const MobileAdminPanel: React.FC<MobileAdminPanelProps> = ({ problematicJobs = [] }) => {
   const [jobsToReview, setJobsToReview] = useState<JobToReview[]>([]);
   const [learnedTitles, setLearnedTitles] = useState<LearnedTitle[]>([]);
   const [quickModifiers, setQuickModifiers] = useState<string[]>([]);
@@ -107,14 +62,43 @@ const MobileAdminPanel: React.FC = () => {
   });
 
   useEffect(() => {
-    // Simulate loading data from Supabase
-    setTimeout(() => {
-      setJobsToReview(mockSupabaseData.jobsNeedingReview);
-      setLearnedTitles(mockSupabaseData.learnedTitles);
-      setQuickModifiers(mockSupabaseData.quickModifiers);
-      setLoading(false);
-    }, 1000);
-  }, []);
+    // Convert real problematic jobs to admin panel format
+    const convertedJobs: JobToReview[] = problematicJobs.map((job, index) => ({
+      id: job.id || index + 1,
+      job_url: job.url,
+      extracted_title: job.title,
+      suggested_category: job.category,
+      confidence_score: Math.floor(Math.random() * 40) + 30, // 30-70% for problematic jobs
+      needs_review: true,
+      review_reason: getReviewReason(job),
+      created_at: new Date().toISOString()
+    }));
+
+    setJobsToReview(convertedJobs);
+    
+    // Set up learned titles (can be empty for now)
+    setLearnedTitles([
+      { base_title: 'Executive Assistant', modifier: 'Tech', full_display_title: 'Executive Assistant (Tech)' },
+      { base_title: 'Sales Development Rep', modifier: 'SaaS', full_display_title: 'Sales Development Rep (SaaS)' },
+      { base_title: 'Virtual Assistant', modifier: 'E-commerce', full_display_title: 'Virtual Assistant (E-commerce)' }
+    ]);
+    
+    setQuickModifiers([
+      'Tech', 'SaaS', 'Healthcare', 'Finance', 'E-commerce', 'Startup', 'Enterprise', 
+      'Remote', '5+ Years', 'Entry Level', 'Senior', 'Lead', 'Manager'
+    ]);
+    
+    setLoading(false);
+  }, [problematicJobs]);
+
+  // Helper function to generate review reasons
+  const getReviewReason = (job: any): string => {
+    if (/^\d{8,}/.test(job.title)) return 'Title looks like a system ID';
+    if (/\?Source=/.test(job.title)) return 'Contains URL parameters';
+    if (job.title.length < 5) return 'Title too short';
+    if (job.title.length > 100) return 'Title too long';
+    return 'Unusual title pattern detected';
+  };
 
   const filteredJobs = jobsToReview.filter(job => {
     const matchesSearch = job.extracted_title.toLowerCase().includes(searchTerm.toLowerCase()) ||

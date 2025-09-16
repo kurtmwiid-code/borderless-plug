@@ -65,25 +65,20 @@ const GOOGLE_SHEETS_CONFIG = {
 };
 
 // ============================================
-// GOOGLE SHEETS DATA FETCHER
+// FIXED GOOGLE SHEETS DATA FETCHER - NO DUMMY DATA
 // ============================================
 const fetchJobsFromGoogleSheets = async (): Promise<string[]> => {
   try {
     const sheetId = GOOGLE_SHEETS_CONFIG.SHEET_ID;
     
-    if (sheetId === 'YOUR_SHEET_ID_HERE') {
-      console.log('⚠️ Please update SHEET_ID in the code with your actual Google Sheets ID');
-      return [
-        'https://remote.co/job/frontend-developer-react',
-        'https://weworkremotely.com/remote-jobs/sales-manager-saas',
-        'https://flexjobs.com/virtual-assistant-executive',
-        'https://remoteok.io/remote-dev-jobs/python-engineer'
-      ];
-    }
+    // ✅ REMOVED THE DUMMY DATA CHECK - Your real sheet will now work
+    // The problematic check that returned dummy data has been eliminated
     
     const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&range=A:A`;
     
     console.log('🔄 Fetching jobs from Google Sheets...');
+    console.log(`📊 Using Sheet ID: ${sheetId}`);
+    
     const response = await fetch(csvUrl);
     
     if (!response.ok) {
@@ -91,6 +86,8 @@ const fetchJobsFromGoogleSheets = async (): Promise<string[]> => {
     }
     
     const csvText = await response.text();
+    console.log('📄 Raw CSV received:', csvText.substring(0, 200) + '...');
+    
     const lines = csvText.split('\n');
     const jobUrls = lines
       .slice(1)
@@ -102,14 +99,10 @@ const fetchJobsFromGoogleSheets = async (): Promise<string[]> => {
     
   } catch (error) {
     console.error('❌ Error fetching from Google Sheets:', error);
-    console.log('🔄 Using sample data instead...');
+    console.log('🚨 No fallback data - check your Google Sheets configuration');
     
-    return [
-      'https://remote.co/job/frontend-developer-react',
-      'https://weworkremotely.com/remote-jobs/sales-manager-saas',
-      'https://flexjobs.com/virtual-assistant-executive',
-      'https://remoteok.io/remote-dev-jobs/python-engineer'
-    ];
+    // Return empty array instead of dummy data
+    return [];
   }
 };
 
@@ -222,6 +215,7 @@ const IconComponent: React.FC<IconComponentProps> = ({ name, size = 20, color = 
 const RemoteJobBoard: React.FC = () => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [cleanJobs, setCleanJobs] = useState<Job[]>([]); // Only approved jobs for public
+  const [problematicJobs, setProblematicJobs] = useState<Job[]>([]); // Jobs needing review
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
@@ -267,33 +261,35 @@ const RemoteJobBoard: React.FC = () => {
     });
     
     // Separate clean jobs from problematic ones
-    const { cleanJobs: approvedJobs, problematicJobs } = filterJobs(categorizedJobs);
+    const { cleanJobs: approvedJobs, problematicJobs: flaggedJobs } = filterJobs(categorizedJobs);
     
     setJobs(categorizedJobs); // All jobs (for admin)
     setCleanJobs(approvedJobs); // Only clean jobs (for public)
+    setProblematicJobs(flaggedJobs); // Store problematic jobs for admin
     setLastUpdated(new Date());
     setLoading(false);
     
     console.log(`✅ Loaded ${categorizedJobs.length} total jobs`);
     console.log(`👀 ${approvedJobs.length} clean jobs shown to public`);
-    console.log(`🚨 ${problematicJobs.length} problematic jobs sent to admin`);
+    console.log(`🚨 ${flaggedJobs.length} problematic jobs sent to admin`);
 
-    // Send ONE batch WhatsApp notification instead of individual ones
-    if (problematicJobs.length > 0) {
+    // ONLY send batch WhatsApp notification if we're in admin mode
+    // NEVER send notifications to regular users visiting the site
+    if (flaggedJobs.length > 0 && window.location.pathname === '/admin') {
       // Create a single batch summary message
       const batchMessage = `🚨 BORDERLESS PLUG BATCH ALERT
 
 📊 SUMMARY:
-• ${problematicJobs.length} jobs need review
-• ${problematicJobs.filter(job => JobIssueDetector.detectIssues(job).some(issue => issue.severity === 'HIGH')).length} high priority issues
+• ${flaggedJobs.length} jobs need review
+• ${flaggedJobs.filter(job => JobIssueDetector.detectIssues(job).some(issue => issue.severity === 'HIGH')).length} high priority issues
 
 🔍 TOP ISSUES:
-${problematicJobs.slice(0, 5).map((job, index) => {
+${flaggedJobs.slice(0, 5).map((job, index) => {
   const issues = JobIssueDetector.detectIssues(job);
   const mainIssue = issues[0]?.reason || 'Needs review';
   return `${index + 1}. "${job.title}" - ${mainIssue}`;
 }).join('\n')}
-${problematicJobs.length > 5 ? `... and ${problematicJobs.length - 5} more` : ''}
+${flaggedJobs.length > 5 ? `... and ${flaggedJobs.length - 5} more` : ''}
 
 💻 REVIEW ALL: ${window.location.origin}/admin
 
@@ -302,12 +298,12 @@ Quick Actions:
 📝 Reply "DONE" when finished
 🔄 Reply "REFRESH" for new batch`;
 
-      // Open ONE WhatsApp tab with batch summary
+      // Open ONE WhatsApp tab with batch summary ONLY for admin
       const encodedMessage = encodeURIComponent(batchMessage);
       const whatsappUrl = `https://wa.me/27679245039?text=${encodedMessage}`;
       window.open(whatsappUrl, '_blank');
       
-      console.log(`📱 Sent batch notification for ${problematicJobs.length} problematic jobs`);
+      console.log(`📱 Sent batch notification for ${flaggedJobs.length} problematic jobs`);
     }
   };
 
@@ -374,9 +370,9 @@ Quick Actions:
     return cleanJobs.filter(job => job.category === category).length;
   };
 
-  // Admin panel check
+  // Admin panel check - pass real problematic jobs
   if (showAdmin) {
-    return <MobileAdminPanel />;
+    return <MobileAdminPanel problematicJobs={problematicJobs} />;
   }
 
   // ============================================
