@@ -278,11 +278,36 @@ const RemoteJobBoard: React.FC = () => {
     console.log(`👀 ${approvedJobs.length} clean jobs shown to public`);
     console.log(`🚨 ${problematicJobs.length} problematic jobs sent to admin`);
 
-    // Send WhatsApp notifications for problematic jobs
+    // Send ONE batch WhatsApp notification instead of individual ones
     if (problematicJobs.length > 0) {
-      problematicJobs.forEach(job => {
-        sendNotificationForJob(job);
-      });
+      // Create a single batch summary message
+      const batchMessage = `🚨 BORDERLESS PLUG BATCH ALERT
+
+📊 SUMMARY:
+• ${problematicJobs.length} jobs need review
+• ${problematicJobs.filter(job => JobIssueDetector.detectIssues(job).some(issue => issue.severity === 'HIGH')).length} high priority issues
+
+🔍 TOP ISSUES:
+${problematicJobs.slice(0, 5).map((job, index) => {
+  const issues = JobIssueDetector.detectIssues(job);
+  const mainIssue = issues[0]?.reason || 'Needs review';
+  return `${index + 1}. "${job.title}" - ${mainIssue}`;
+}).join('\n')}
+${problematicJobs.length > 5 ? `... and ${problematicJobs.length - 5} more` : ''}
+
+💻 REVIEW ALL: ${window.location.origin}/admin
+
+Quick Actions:
+✅ Reply "REVIEWING" when you start
+📝 Reply "DONE" when finished
+🔄 Reply "REFRESH" for new batch`;
+
+      // Open ONE WhatsApp tab with batch summary
+      const encodedMessage = encodeURIComponent(batchMessage);
+      const whatsappUrl = `https://wa.me/27679245039?text=${encodedMessage}`;
+      window.open(whatsappUrl, '_blank');
+      
+      console.log(`📱 Sent batch notification for ${problematicJobs.length} problematic jobs`);
     }
   };
 

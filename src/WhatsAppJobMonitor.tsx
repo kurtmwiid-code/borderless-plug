@@ -185,7 +185,37 @@ class WhatsAppNotifier {
     return message;
   }
   
-  static createDailySummary(alerts: JobAlert[]): string {
+  static createBatchSummaryMessage(problematicJobs: any[]): string {
+    const highPriorityCount = problematicJobs.filter(job => 
+      JobIssueDetector.detectIssues(job).some(issue => issue.severity === 'HIGH')
+    ).length;
+    
+    let message = `🚨 BORDERLESS PLUG BATCH ALERT\n\n`;
+    message += `📊 SUMMARY:\n`;
+    message += `• ${problematicJobs.length} jobs need review\n`;
+    message += `• ${highPriorityCount} high priority issues\n\n`;
+    
+    message += `🔍 TOP ISSUES:\n`;
+    problematicJobs.slice(0, 5).forEach((job, index) => {
+      const issues = JobIssueDetector.detectIssues(job);
+      const mainIssue = issues[0]?.reason || 'Needs review';
+      message += `${index + 1}. "${job.title}" - ${mainIssue}\n`;
+    });
+    
+    if (problematicJobs.length > 5) {
+      message += `... and ${problematicJobs.length - 5} more\n`;
+    }
+    
+    message += `\n💻 REVIEW ALL: ${window.location.origin}/admin\n\n`;
+    message += `Quick Actions:\n`;
+    message += `✅ Reply "REVIEWING" when you start\n`;
+    message += `📝 Reply "DONE" when finished\n`;
+    message += `🔄 Reply "REFRESH" for new batch`;
+    
+    return message;
+  }
+
+  static createDailySummaryMessage(alerts: JobAlert[]): string {
     const totalJobs = alerts.length;
     const highPriority = alerts.filter(a => a.issues.some(i => i.severity === 'HIGH')).length;
     const weirdTitles = alerts.filter(a => a.issues.some(i => i.type === 'WEIRD_TITLE')).length;
@@ -199,8 +229,8 @@ class WhatsAppNotifier {
            `Have a productive day! 🚀`;
   }
   
-  static openWhatsAppAlert(message: string): void {
-    const encodedMessage = encodeURIComponent(message);
+  static openWhatsAppAlert(onmessage: string): void {
+    const encodedMessage = encodeURIComponent(onmessage);
     const phoneNumber = NOTIFICATION_CONFIG.ADMIN_PHONE.replace('+', '');
     const whatsappUrl = `https://wa.me/${phoneNumber}?text=${encodedMessage}`;
     
