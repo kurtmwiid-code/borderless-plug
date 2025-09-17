@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, Briefcase, Users, MessageCircle, Star, ArrowRight, Phone, RefreshCw, Globe, Award, TrendingUp, MapPin, Clock, ExternalLink, CheckCircle } from 'lucide-react';
+import { Search, Filter, Briefcase, Users, MessageCircle, Star, ArrowRight, Phone, RefreshCw, Globe, Award, TrendingUp, MapPin, Clock, ExternalLink, CheckCircle, Edit, Trash2, Eye } from 'lucide-react';
 import MobileAdminPanel from './MobileAdminPanel';
 import { useJobMonitoring, JobIssueDetector } from './WhatsAppJobMonitor';
 import JobManager, { useJobs } from './JobManager';
@@ -16,6 +16,17 @@ interface Job {
   category: string;
   title: string;
   company: string;
+}
+
+interface PendingJob {
+  id: number;
+  job_url: string;
+  extracted_title: string;
+  company: string;
+  suggested_category: string;
+  status: string;
+  confidence_score: number;
+  created_at: string;
 }
 
 interface CategoryData {
@@ -128,25 +139,27 @@ const IconComponent: React.FC<IconComponentProps> = ({ name, size = 20, color = 
 // MAIN COMPONENT
 // ============================================
 const RemoteJobBoard: React.FC = () => {
-  // Keep existing state
   const [cleanJobs, setCleanJobs] = useState<Job[]>([]);
+  const [pendingJobs, setPendingJobs] = useState<PendingJob[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [showAdmin, setShowAdmin] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
+  const [editingJob, setEditingJob] = useState<PendingJob | null>(null);
 
   const loadJobs = async (): Promise<void> => {
     setLoading(true);
     console.log('Loading from Supabase...');
     
-    const { data, error } = await supabase
+    // Load approved jobs for public display
+    const { data: approvedData } = await supabase
       .from('job_review_queue')
       .select('*')
       .eq('status', 'approved');
 
-    if (data) {
-      const jobs = data.map((job: any) => ({
+    if (approvedData) {
+      const jobs = approvedData.map((job: any) => ({
         id: job.id,
         url: job.job_url,
         title: job.extracted_title || 'Job',
@@ -155,6 +168,17 @@ const RemoteJobBoard: React.FC = () => {
       }));
       setCleanJobs(jobs);
       setLastUpdated(new Date());
+    }
+
+    // Load pending jobs for admin review
+    const { data: pendingData } = await supabase
+      .from('job_review_queue')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+
+    if (pendingData) {
+      setPendingJobs(pendingData);
     }
     
     setLoading(false);
@@ -178,29 +202,100 @@ const RemoteJobBoard: React.FC = () => {
 
       console.log(`Found ${urls.length} URLs to import`);
 
+      let importCount = 0;
       for (const url of urls) {
         const title = extractJobTitle(url);
         const company = extractCompany(url);
         const category = categorizeJob(url, title);
+        const confidence = calculateConfidence(url, title, category);
 
-        await supabase
+        // Import as PENDING - not approved
+        const { error } = await supabase
           .from('job_review_queue')
           .insert({
             job_url: url,
             extracted_title: title,
             company: company,
             suggested_category: category,
-            status: 'approved'
+            confidence_score: confidence,
+            status: 'pending'  // KEY CHANGE: Import as pending
           });
         
+        if (!error) importCount++;
         await new Promise(resolve => setTimeout(resolve, 100));
       }
 
-      console.log('Import completed');
-      loadJobs(); // Refresh the jobs list
+      console.log(`Import completed: ${importCount} new jobs added for review`);
+      
+      // Send WhatsApp notification about pending jobs
+      if (importCount > 0) {
+        sendWhatsAppNotification(importCount);
+      }
+      
+      loadJobs(); // Refresh lists
       
     } catch (error) {
       console.error('Import error:', error);
+    }
+  };
+
+  const sendWhatsAppNotification = (count: number) => {
+    const message = `🚨 BORDERLESS PLUG - NEW JOBS FOR REVIEW
+
+📊 ${count} jobs imported and need your approval
+
+💻 Review at: ${window.location.origin}/admin
+
+Quick actions:
+✅ Review and approve quality jobs
+❌ Reject poor quality jobs
+✏️ Edit titles/companies before approval
+
+Time to review and get these jobs live!`;
+
+    const encodedMessage = encodeURIComponent(message);
+    window.open(`https://wa.me/27679245039?text=${encodedMessage}`, '_blank');
+  };
+
+  const approveJob = async (jobId: number) => {
+    const { error } = await supabase
+      .from('job_review_queue')
+      .update({ 
+        status: 'approved',
+        approved_at: new Date().toISOString(),
+        approved_by: 'admin'
+      })
+      .eq('id', jobId);
+
+    if (!error) {
+      loadJobs(); // Refresh both lists
+    }
+  };
+
+  const rejectJob = async (jobId: number) => {
+    const { error } = await supabase
+      .from('job_review_queue')
+      .update({ status: 'rejected' })
+      .eq('id', jobId);
+
+    if (!error) {
+      loadJobs();
+    }
+  };
+
+  const updateJob = async (job: PendingJob) => {
+    const { error } = await supabase
+      .from('job_review_queue')
+      .update({
+        extracted_title: job.extracted_title,
+        company: job.company,
+        suggested_category: job.suggested_category
+      })
+      .eq('id', job.id);
+
+    if (!error) {
+      setEditingJob(null);
+      loadJobs();
     }
   };
 
@@ -242,6 +337,15 @@ const RemoteJobBoard: React.FC = () => {
     return 'Operations';
   };
 
+  const calculateConfidence = (url: string, title: string, category: string): number => {
+    let confidence = 0.5;
+    if (url.includes('remote.co') || url.includes('weworkremotely')) confidence += 0.3;
+    if (url.includes('indeed') || url.includes('linkedin')) confidence += 0.2;
+    if (title.length > 10) confidence += 0.1;
+    if (title.includes('Senior') || title.includes('Lead')) confidence += 0.1;
+    return Math.min(confidence, 1.0);
+  };
+
   useEffect(() => {
     loadJobs();
   }, []);
@@ -273,49 +377,264 @@ const RemoteJobBoard: React.FC = () => {
 
   if (showAdmin) {
     return (
-      <div>
-        <div style={{ 
-          padding: '20px', 
-          background: 'linear-gradient(135deg, #012920, #065f46)', 
-          margin: '20px',
-          borderRadius: '12px',
-          color: '#d7bc69'
-        }}>
-          <h3 style={{ marginBottom: '16px', fontSize: '20px' }}>Admin Controls</h3>
-          
-          <button 
-            onClick={importFromGoogleSheets}
-            style={{
-              padding: '12px 24px',
-              background: 'linear-gradient(135deg, #d7bc69, #eab308)',
-              color: '#012920',
-              border: 'none',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              marginRight: '12px',
-              fontWeight: 'bold',
-              fontSize: '14px'
-            }}
-          >
-            Import from Google Sheets
-          </button>
-          
-          <div style={{ marginTop: '16px' }}>
-            <div style={{ 
-              background: 'rgba(215, 188, 105, 0.1)', 
-              padding: '12px', 
-              borderRadius: '8px',
-              border: '1px solid rgba(215, 188, 105, 0.3)'
-            }}>
-              <strong>Jobs in Database:</strong> {cleanJobs.length}
+      <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #012920, #065f46)', padding: '20px' }}>
+        <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+          <div style={{ 
+            background: 'rgba(215, 188, 105, 0.1)', 
+            borderRadius: '12px',
+            padding: '24px',
+            marginBottom: '24px',
+            border: '1px solid rgba(215, 188, 105, 0.3)'
+          }}>
+            <h2 style={{ color: '#d7bc69', marginBottom: '20px', fontSize: '24px' }}>Admin Dashboard</h2>
+            
+            <div style={{ display: 'flex', gap: '16px', marginBottom: '24px' }}>
+              <button 
+                onClick={importFromGoogleSheets}
+                style={{
+                  padding: '12px 24px',
+                  background: 'linear-gradient(135deg, #d7bc69, #eab308)',
+                  color: '#012920',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                  fontSize: '14px'
+                }}
+              >
+                Import from Google Sheets
+              </button>
             </div>
+            
+            <div style={{ display: 'flex', gap: '24px', marginBottom: '24px' }}>
+              <div style={{ 
+                background: 'rgba(239, 68, 68, 0.1)', 
+                padding: '12px 16px', 
+                borderRadius: '8px',
+                border: '1px solid rgba(239, 68, 68, 0.3)'
+              }}>
+                <strong style={{ color: '#ef4444' }}>Pending Review:</strong> <span style={{ color: '#d7bc69' }}>{pendingJobs.length}</span>
+              </div>
+              <div style={{ 
+                background: 'rgba(34, 197, 94, 0.1)', 
+                padding: '12px 16px', 
+                borderRadius: '8px',
+                border: '1px solid rgba(34, 197, 94, 0.3)'
+              }}>
+                <strong style={{ color: '#22c55e' }}>Live Jobs:</strong> <span style={{ color: '#d7bc69' }}>{cleanJobs.length}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Pending Jobs Section */}
+          <div style={{ 
+            background: 'rgba(215, 188, 105, 0.1)', 
+            borderRadius: '12px',
+            padding: '24px',
+            border: '1px solid rgba(215, 188, 105, 0.3)'
+          }}>
+            <h3 style={{ color: '#d7bc69', marginBottom: '20px', fontSize: '20px' }}>
+              Jobs Pending Review ({pendingJobs.length})
+            </h3>
+            
+            {pendingJobs.length === 0 ? (
+              <p style={{ color: '#047857', textAlign: 'center', padding: '40px' }}>
+                All caught up! No jobs need review right now.
+              </p>
+            ) : (
+              <div style={{ display: 'grid', gap: '16px' }}>
+                {pendingJobs.map(job => (
+                  <div key={job.id} style={{
+                    background: 'rgba(1, 41, 32, 0.8)',
+                    border: '1px solid rgba(215, 188, 105, 0.3)',
+                    borderRadius: '12px',
+                    padding: '20px'
+                  }}>
+                    {editingJob?.id === job.id ? (
+                      // Edit Mode
+                      <div>
+                        <div style={{ marginBottom: '12px' }}>
+                          <label style={{ color: '#d7bc69', display: 'block', marginBottom: '4px' }}>Title:</label>
+                          <input
+                            type="text"
+                            value={editingJob.extracted_title}
+                            onChange={(e) => setEditingJob({...editingJob, extracted_title: e.target.value})}
+                            style={{
+                              width: '100%',
+                              padding: '8px',
+                              background: 'rgba(215, 188, 105, 0.1)',
+                              border: '1px solid rgba(215, 188, 105, 0.3)',
+                              borderRadius: '4px',
+                              color: '#d7bc69'
+                            }}
+                          />
+                        </div>
+                        <div style={{ marginBottom: '12px' }}>
+                          <label style={{ color: '#d7bc69', display: 'block', marginBottom: '4px' }}>Company:</label>
+                          <input
+                            type="text"
+                            value={editingJob.company}
+                            onChange={(e) => setEditingJob({...editingJob, company: e.target.value})}
+                            style={{
+                              width: '100%',
+                              padding: '8px',
+                              background: 'rgba(215, 188, 105, 0.1)',
+                              border: '1px solid rgba(215, 188, 105, 0.3)',
+                              borderRadius: '4px',
+                              color: '#d7bc69'
+                            }}
+                          />
+                        </div>
+                        <div style={{ marginBottom: '16px' }}>
+                          <label style={{ color: '#d7bc69', display: 'block', marginBottom: '4px' }}>Category:</label>
+                          <select
+                            value={editingJob.suggested_category}
+                            onChange={(e) => setEditingJob({...editingJob, suggested_category: e.target.value})}
+                            style={{
+                              width: '100%',
+                              padding: '8px',
+                              background: 'rgba(215, 188, 105, 0.1)',
+                              border: '1px solid rgba(215, 188, 105, 0.3)',
+                              borderRadius: '4px',
+                              color: '#d7bc69'
+                            }}
+                          >
+                            {Object.keys(JOB_CATEGORIES).map(cat => (
+                              <option key={cat} value={cat}>{cat}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div style={{ display: 'flex', gap: '12px' }}>
+                          <button
+                            onClick={() => updateJob(editingJob)}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#22c55e',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Save Changes
+                          </button>
+                          <button
+                            onClick={() => setEditingJob(null)}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#6b7280',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      // View Mode
+                      <div>
+                        <div style={{ marginBottom: '16px' }}>
+                          <h4 style={{ color: '#d7bc69', fontSize: '18px', marginBottom: '4px' }}>
+                            {job.extracted_title}
+                          </h4>
+                          <p style={{ color: '#047857', marginBottom: '4px' }}>{job.company}</p>
+                          <p style={{ color: '#6b7280', fontSize: '14px' }}>Category: {job.suggested_category}</p>
+                          <p style={{ color: '#6b7280', fontSize: '12px' }}>
+                            Confidence: {Math.round((job.confidence_score || 0) * 100)}%
+                          </p>
+                        </div>
+                        
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                          <button
+                            onClick={() => approveJob(job.id)}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#22c55e',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <CheckCircle size={16} />
+                            Approve
+                          </button>
+                          
+                          <button
+                            onClick={() => setEditingJob(job)}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#3b82f6',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <Edit size={16} />
+                            Edit
+                          </button>
+                          
+                          <button
+                            onClick={() => rejectJob(job.id)}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#ef4444',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <Trash2 size={16} />
+                            Reject
+                          </button>
+                          
+                          <a
+                            href={job.job_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              padding: '8px 16px',
+                              background: '#6b7280',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              textDecoration: 'none',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <Eye size={16} />
+                            View Job
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
     );
   }
 
-  // Styles
+  // Main public site remains the same
   const containerStyle: React.CSSProperties = {
     minHeight: '100vh',
     background: `linear-gradient(135deg, ${THEME_CONFIG.colors.emeraldDark} 0%, ${THEME_CONFIG.colors.emeraldMedium} 50%, ${THEME_CONFIG.colors.emeraldDark} 100%)`
@@ -563,7 +882,7 @@ const RemoteJobBoard: React.FC = () => {
                     marginBottom: '12px' 
                   }}>Loading Jobs...</h3>
                   <p style={{ color: THEME_CONFIG.colors.emeraldLight }}>
-                    Fetching the latest remote opportunities from Supabase
+                    Fetching the latest approved opportunities
                   </p>
                 </div>
               )}
@@ -672,7 +991,7 @@ const RemoteJobBoard: React.FC = () => {
                   <p style={{ color: THEME_CONFIG.colors.emeraldLight }}>
                     {searchTerm 
                       ? `No jobs match "${searchTerm}"` 
-                      : 'No jobs available'}
+                      : 'No approved jobs available yet'}
                   </p>
                 </div>
               )}
