@@ -1,19 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Filter, Briefcase, Users, MessageCircle, Star, ArrowRight, Phone, RefreshCw, Globe, Award, TrendingUp, MapPin, Clock, ExternalLink, CheckCircle, Edit, Trash2, Eye } from 'lucide-react';
+import { createClient } from '@supabase/supabase-js';
 
-const supabase = {
-  from: (table: string) => ({
-    select: (columns: string) => ({
-      eq: (column: string, value: string) => ({
-        order: (column: string, options: any) => Promise.resolve({ data: [] })
-      })
-    }),
-    insert: (data: any) => Promise.resolve({ error: null }),
-    update: (data: any) => ({
-      eq: (column: string, value: string) => Promise.resolve({ error: null })
-    })
-  })
-};
+const supabase = createClient('https://aljnetqtbajiudehmzdv.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFsam5ldHF0YmFqaXVkZWhtemR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwMTY2MDksImV4cCI6MjA3MzU5MjYwOX0.gDp3q-v5BKcHk_sIuB3AniKilUOoYisqyh8zJqJ2HaA');
 
 // ============================================
 // TYPE DEFINITIONS
@@ -173,34 +162,40 @@ const RemoteJobBoard: React.FC = () => {
     setLoading(true);
     console.log('Loading from Supabase...');
     
-    // Mock data for demo
-    const mockJobs: Job[] = [
-      {
-        id: 1,
-        url: 'https://example.com/job1',
-        title: 'Senior React Developer',
-        company: 'TechCorp',
-        category: 'I.T.'
-      },
-      {
-        id: 2,
-        url: 'https://example.com/job2',
-        title: 'Sales Development Representative',
-        company: 'SalesForce',
-        category: 'Sales'
-      },
-      {
-        id: 3,
-        url: 'https://example.com/job3',
-        title: 'Virtual Assistant',
-        company: 'Remote Co',
-        category: 'Virtual Assistant'
+    try {
+      // Load approved jobs for public display
+      const { data: approvedData } = await supabase
+        .from('job_review_queue')
+        .select('*')
+        .eq('status', 'approved');
+
+      if (approvedData) {
+        const jobs = approvedData.map((job: any) => ({
+          id: job.id,
+          url: job.job_url,
+          title: job.extracted_title || 'Job',
+          company: job.company || 'Company',
+          category: job.suggested_category || 'Operations'
+        }));
+        setCleanJobs(jobs);
+        setLastUpdated(new Date());
       }
-    ];
-    
-    setCleanJobs(mockJobs);
-    setLastUpdated(new Date());
-    setLoading(false);
+
+      // Load pending jobs for admin review
+      const { data: pendingData } = await supabase
+        .from('job_review_queue')
+        .select('*')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false });
+
+      if (pendingData) {
+        setPendingJobs(pendingData);
+      }
+    } catch (error) {
+      console.error('Error loading jobs:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const importFromGoogleSheets = async () => {
@@ -210,10 +205,67 @@ const RemoteJobBoard: React.FC = () => {
       const sheetId = '1imnNLvoNw_LZfI0pb18a0D9ktW10ixEdA7tOXOjNqRU';
       const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&range=A:A`;
       
-      // Mock import for demo
-      console.log('Import completed: 5 new jobs added for review');
-      sendWhatsAppNotification(5);
-      loadJobs();
+      // Mock import - Add some sample pending jobs for demo
+      const mockPendingJobs: PendingJob[] = [
+        {
+          id: Date.now() + 1,
+          job_url: 'https://remote.co/job/senior-react-developer-123',
+          extracted_title: 'Senior React Developer',
+          company: 'TechCorp Remote',
+          suggested_category: 'I.T.',
+          status: 'pending',
+          confidence_score: 0.85,
+          created_at: new Date().toISOString()
+        },
+        {
+          id: Date.now() + 2,
+          job_url: 'https://weworkremotely.com/sales-development-representative-456',
+          extracted_title: 'Sales Development Representative',
+          company: 'SalesForce Global',
+          suggested_category: 'Sales',
+          status: 'pending',
+          confidence_score: 0.75,
+          created_at: new Date().toISOString()
+        },
+        {
+          id: Date.now() + 3,
+          job_url: 'https://flexjobs.com/virtual-assistant-789',
+          extracted_title: 'Executive Virtual Assistant',
+          company: 'Remote Solutions Inc',
+          suggested_category: 'Virtual Assistant',
+          status: 'pending',
+          confidence_score: 0.90,
+          created_at: new Date().toISOString()
+        },
+        {
+          id: Date.now() + 4,
+          job_url: 'https://remoteok.io/customer-support-specialist-321',
+          extracted_title: 'Customer Support Specialist',
+          company: 'SupportHub',
+          suggested_category: 'Customer Service',
+          status: 'pending',
+          confidence_score: 0.80,
+          created_at: new Date().toISOString()
+        },
+        {
+          id: Date.now() + 5,
+          job_url: 'https://indeed.com/marketing-manager-654',
+          extracted_title: 'Digital Marketing Manager',
+          company: 'Growth Marketing Co',
+          suggested_category: 'Marketing',
+          status: 'pending',
+          confidence_score: 0.88,
+          created_at: new Date().toISOString()
+        }
+      ];
+
+      // Add to pending jobs (NOT approved)
+      setPendingJobs(prev => [...prev, ...mockPendingJobs]);
+      
+      console.log(`Import completed: ${mockPendingJobs.length} new jobs added for review`);
+      
+      // Send WhatsApp notification about pending jobs
+      sendWhatsAppNotification(mockPendingJobs.length);
       
     } catch (error) {
       console.error('Import error:', error);
@@ -267,6 +319,32 @@ Time to review and get these jobs live!`;
     return cleanJobs.filter(job => job.category === category).length;
   };
 
+  const approveJob = async (jobId: number) => {
+    const job = pendingJobs.find(j => j.id === jobId);
+    if (job) {
+      // Move from pending to approved
+      setCleanJobs(prev => [...prev, {
+        id: job.id,
+        url: job.job_url,
+        title: job.extracted_title,
+        company: job.company,
+        category: job.suggested_category
+      }]);
+      setPendingJobs(prev => prev.filter(j => j.id !== jobId));
+    }
+  };
+
+  const rejectJob = async (jobId: number) => {
+    setPendingJobs(prev => prev.filter(j => j.id !== jobId));
+  };
+
+  const updateJob = async (updatedJob: PendingJob) => {
+    setPendingJobs(prev => 
+      prev.map(job => job.id === updatedJob.id ? updatedJob : job)
+    );
+    setEditingJob(null);
+  };
+
   if (showAdmin) {
     return (
       <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #012920, #065f46)', padding: isMobile ? '16px' : '20px' }}>
@@ -298,6 +376,244 @@ Time to review and get these jobs live!`;
                 Import from Google Sheets
               </button>
             </div>
+            
+            <div style={{ display: 'flex', gap: '24px', marginBottom: '24px', flexWrap: 'wrap' }}>
+              <div style={{ 
+                background: 'rgba(239, 68, 68, 0.1)', 
+                padding: '12px 16px', 
+                borderRadius: '8px',
+                border: '1px solid rgba(239, 68, 68, 0.3)'
+              }}>
+                <strong style={{ color: '#ef4444' }}>Pending Review:</strong> <span style={{ color: '#d7bc69' }}>{pendingJobs.length}</span>
+              </div>
+              <div style={{ 
+                background: 'rgba(34, 197, 94, 0.1)', 
+                padding: '12px 16px', 
+                borderRadius: '8px',
+                border: '1px solid rgba(34, 197, 94, 0.3)'
+              }}>
+                <strong style={{ color: '#22c55e' }}>Live Jobs:</strong> <span style={{ color: '#d7bc69' }}>{cleanJobs.length}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Pending Jobs Section */}
+          <div style={{ 
+            background: 'rgba(215, 188, 105, 0.1)', 
+            borderRadius: '12px',
+            padding: isMobile ? '16px' : '24px',
+            border: '1px solid rgba(215, 188, 105, 0.3)'
+          }}>
+            <h3 style={{ color: '#d7bc69', marginBottom: '20px', fontSize: isMobile ? '18px' : '20px' }}>
+              Jobs Pending Review ({pendingJobs.length})
+            </h3>
+            
+            {pendingJobs.length === 0 ? (
+              <p style={{ color: '#047857', textAlign: 'center', padding: '40px' }}>
+                All caught up! No jobs need review right now.
+              </p>
+            ) : (
+              <div style={{ display: 'grid', gap: '16px' }}>
+                {pendingJobs.map(job => (
+                  <div key={job.id} style={{
+                    background: 'rgba(1, 41, 32, 0.8)',
+                    border: '1px solid rgba(215, 188, 105, 0.3)',
+                    borderRadius: '12px',
+                    padding: isMobile ? '16px' : '20px'
+                  }}>
+                    {editingJob?.id === job.id ? (
+                      // Edit Mode
+                      <div>
+                        <div style={{ marginBottom: '12px' }}>
+                          <label style={{ color: '#d7bc69', display: 'block', marginBottom: '4px', fontSize: isMobile ? '14px' : '16px' }}>Title:</label>
+                          <input
+                            type="text"
+                            value={editingJob.extracted_title}
+                            onChange={(e) => setEditingJob({...editingJob, extracted_title: e.target.value})}
+                            style={{
+                              width: '100%',
+                              padding: '8px',
+                              background: 'rgba(215, 188, 105, 0.1)',
+                              border: '1px solid rgba(215, 188, 105, 0.3)',
+                              borderRadius: '4px',
+                              color: '#d7bc69',
+                              fontSize: isMobile ? '14px' : '16px'
+                            }}
+                          />
+                        </div>
+                        <div style={{ marginBottom: '12px' }}>
+                          <label style={{ color: '#d7bc69', display: 'block', marginBottom: '4px', fontSize: isMobile ? '14px' : '16px' }}>Company:</label>
+                          <input
+                            type="text"
+                            value={editingJob.company}
+                            onChange={(e) => setEditingJob({...editingJob, company: e.target.value})}
+                            style={{
+                              width: '100%',
+                              padding: '8px',
+                              background: 'rgba(215, 188, 105, 0.1)',
+                              border: '1px solid rgba(215, 188, 105, 0.3)',
+                              borderRadius: '4px',
+                              color: '#d7bc69',
+                              fontSize: isMobile ? '14px' : '16px'
+                            }}
+                          />
+                        </div>
+                        <div style={{ marginBottom: '16px' }}>
+                          <label style={{ color: '#d7bc69', display: 'block', marginBottom: '4px', fontSize: isMobile ? '14px' : '16px' }}>Category:</label>
+                          <select
+                            value={editingJob.suggested_category}
+                            onChange={(e) => setEditingJob({...editingJob, suggested_category: e.target.value})}
+                            style={{
+                              width: '100%',
+                              padding: '8px',
+                              background: 'rgba(215, 188, 105, 0.1)',
+                              border: '1px solid rgba(215, 188, 105, 0.3)',
+                              borderRadius: '4px',
+                              color: '#d7bc69',
+                              fontSize: isMobile ? '14px' : '16px'
+                            }}
+                          >
+                            {Object.keys(JOB_CATEGORIES).map(cat => (
+                              <option key={cat} value={cat}>{cat}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: '12px' }}>
+                          <button
+                            onClick={() => updateJob(editingJob)}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#22c55e',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              fontSize: isMobile ? '14px' : '16px',
+                              flex: isMobile ? 'none' : '1'
+                            }}
+                          >
+                            Save Changes
+                          </button>
+                          <button
+                            onClick={() => setEditingJob(null)}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#6b7280',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              fontSize: isMobile ? '14px' : '16px',
+                              flex: isMobile ? 'none' : '1'
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      // View Mode
+                      <div>
+                        <div style={{ marginBottom: '16px' }}>
+                          <h4 style={{ color: '#d7bc69', fontSize: isMobile ? '16px' : '18px', marginBottom: '4px' }}>
+                            {job.extracted_title}
+                          </h4>
+                          <p style={{ color: '#047857', marginBottom: '4px', fontSize: isMobile ? '14px' : '16px' }}>{job.company}</p>
+                          <p style={{ color: '#6b7280', fontSize: isMobile ? '12px' : '14px' }}>Category: {job.suggested_category}</p>
+                          <p style={{ color: '#6b7280', fontSize: isMobile ? '11px' : '12px' }}>
+                            Confidence: {Math.round((job.confidence_score || 0) * 100)}%
+                          </p>
+                        </div>
+                        
+                        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: '8px', alignItems: isMobile ? 'stretch' : 'center' }}>
+                          <button
+                            onClick={() => approveJob(job.id)}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#22c55e',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '4px',
+                              fontSize: isMobile ? '14px' : '16px'
+                            }}
+                          >
+                            <CheckCircle size={16} />
+                            Approve
+                          </button>
+                          
+                          <button
+                            onClick={() => setEditingJob(job)}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#3b82f6',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '4px',
+                              fontSize: isMobile ? '14px' : '16px'
+                            }}
+                          >
+                            <Edit size={16} />
+                            Edit
+                          </button>
+                          
+                          <button
+                            onClick={() => rejectJob(job.id)}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#ef4444',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '4px',
+                              fontSize: isMobile ? '14px' : '16px'
+                            }}
+                          >
+                            <Trash2 size={16} />
+                            Reject
+                          </button>
+                          
+                          <a
+                            href={job.job_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              padding: '8px 16px',
+                              background: '#6b7280',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              textDecoration: 'none',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '4px',
+                              fontSize: isMobile ? '14px' : '16px'
+                            }}
+                          >
+                            <Eye size={16} />
+                            View Job
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
