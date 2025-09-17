@@ -12,14 +12,14 @@ interface Job {
   url: string;
   category: string;
   title: string;
-  company: string;
+  modifier: string;
 }
 
 interface PendingJob {
   id: number;
   job_url: string;
   extracted_title: string;
-  company: string;
+  modifier: string;
   suggested_category: string;
   status: string;
   confidence_score: number;
@@ -66,6 +66,38 @@ const THEME_CONFIG = {
     grayLight: '#f3f4f6'
   } as ThemeColors
 };
+
+// ============================================
+// JOB MODIFIER OPTIONS
+// ============================================
+const JOB_MODIFIERS = [
+  'Healthcare',
+  'Tech/IT', 
+  'Finance',
+  'Remote-First',
+  'B2B Focus',
+  'B2C Focus',
+  'Startup',
+  'Enterprise',
+  'Bachelors Required',
+  'No Degree Required',
+  'Entry Level',
+  'Senior Level',
+  'Part-time',
+  'Contract',
+  'Freelance',
+  'Commission Based',
+  'High Volume',
+  'Consultative',
+  'Inside Sales',
+  'Field Sales',
+  'International',
+  'US Based',
+  'Night Shift',
+  'Day Shift',
+  'Weekend Availability',
+  'Bilingual Required'
+];
 
 // ============================================
 // JOB CATEGORIZATION SYSTEM
@@ -174,7 +206,7 @@ const RemoteJobBoard: React.FC = () => {
           id: job.id,
           url: job.job_url,
           title: job.extracted_title || 'Job',
-          company: job.company || 'Company',
+          modifier: job.modifier || job.company || 'General',
           category: job.suggested_category || 'Operations'
         }));
         setCleanJobs(jobs);
@@ -189,13 +221,74 @@ const RemoteJobBoard: React.FC = () => {
         .order('created_at', { ascending: false });
 
       if (pendingData) {
-        setPendingJobs(pendingData);
+        const formattedPendingJobs = pendingData.map((job: any) => ({
+          ...job,
+          modifier: job.modifier || job.company || 'General'
+        }));
+        setPendingJobs(formattedPendingJobs);
       }
     } catch (error) {
       console.error('Error loading jobs:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const extractJobTitle = (url: string): string => {
+    const parts = url.split('/');
+    const jobPart = parts[parts.length - 1] || parts[parts.length - 2];
+    return jobPart.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+  };
+
+  const extractModifier = (url: string, title: string): string => {
+    const urlLower = url.toLowerCase();
+    const titleLower = title.toLowerCase();
+    const combinedText = `${urlLower} ${titleLower}`;
+    
+    if (combinedText.includes('healthcare') || combinedText.includes('medical')) return 'Healthcare';
+    if (combinedText.includes('fintech') || combinedText.includes('finance') || combinedText.includes('banking')) return 'Finance';
+    if (combinedText.includes('startup') || combinedText.includes('early stage')) return 'Startup';
+    if (combinedText.includes('enterprise') || combinedText.includes('fortune')) return 'Enterprise';
+    if (combinedText.includes('senior') || combinedText.includes('lead') || combinedText.includes('principal')) return 'Senior Level';
+    if (combinedText.includes('junior') || combinedText.includes('entry') || combinedText.includes('graduate')) return 'Entry Level';
+    if (combinedText.includes('degree required') || combinedText.includes('bachelors')) return 'Bachelors Required';
+    if (combinedText.includes('remote first') || combinedText.includes('fully remote')) return 'Remote-First';
+    if (combinedText.includes('part time') || combinedText.includes('part-time')) return 'Part-time';
+    if (combinedText.includes('contract') || combinedText.includes('contractor')) return 'Contract';
+    if (combinedText.includes('freelance')) return 'Freelance';
+    if (combinedText.includes('b2b') || combinedText.includes('business to business')) return 'B2B Focus';
+    if (combinedText.includes('b2c') || combinedText.includes('consumer')) return 'B2C Focus';
+    if (combinedText.includes('inside sales')) return 'Inside Sales';
+    if (combinedText.includes('field sales')) return 'Field Sales';
+    if (combinedText.includes('high volume')) return 'High Volume';
+    if (combinedText.includes('consultative')) return 'Consultative';
+    
+    return 'General';
+  };
+
+  const categorizeJob = (url: string, title: string): string => {
+    const urlLower = url.toLowerCase();
+    const titleLower = title.toLowerCase();
+    const combinedText = `${urlLower} ${titleLower}`;
+    
+    if (combinedText.includes('developer') || combinedText.includes('engineer') || combinedText.includes('programming')) return 'I.T.';
+    if (combinedText.includes('sales') || combinedText.includes('business development')) return 'Sales';
+    if (combinedText.includes('assistant') || combinedText.includes('admin')) return 'Virtual Assistant';
+    if (combinedText.includes('customer') || combinedText.includes('support')) return 'Customer Service';
+    if (combinedText.includes('hr') || combinedText.includes('recruiting')) return 'H.R.';
+    if (combinedText.includes('design') || combinedText.includes('creative')) return 'Design';
+    if (combinedText.includes('marketing') || combinedText.includes('social media')) return 'Marketing';
+    
+    return 'Operations';
+  };
+
+  const calculateConfidence = (url: string, title: string, category: string): number => {
+    let confidence = 0.5;
+    if (url.includes('remote.co') || url.includes('weworkremotely')) confidence += 0.3;
+    if (url.includes('indeed') || url.includes('linkedin')) confidence += 0.2;
+    if (title.length > 10) confidence += 0.1;
+    if (title.includes('Senior') || title.includes('Lead')) confidence += 0.1;
+    return Math.min(confidence, 1.0);
   };
 
   const importFromGoogleSheets = async () => {
@@ -205,67 +298,55 @@ const RemoteJobBoard: React.FC = () => {
       const sheetId = '1imnNLvoNw_LZfI0pb18a0D9ktW10ixEdA7tOXOjNqRU';
       const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&range=A:A`;
       
-      // Mock import - Add some sample pending jobs for demo
-      const mockPendingJobs: PendingJob[] = [
-        {
-          id: Date.now() + 1,
-          job_url: 'https://remote.co/job/senior-react-developer-123',
-          extracted_title: 'Senior React Developer',
-          company: 'TechCorp Remote',
-          suggested_category: 'I.T.',
-          status: 'pending',
-          confidence_score: 0.85,
-          created_at: new Date().toISOString()
-        },
-        {
-          id: Date.now() + 2,
-          job_url: 'https://weworkremotely.com/sales-development-representative-456',
-          extracted_title: 'Sales Development Representative',
-          company: 'SalesForce Global',
-          suggested_category: 'Sales',
-          status: 'pending',
-          confidence_score: 0.75,
-          created_at: new Date().toISOString()
-        },
-        {
-          id: Date.now() + 3,
-          job_url: 'https://flexjobs.com/virtual-assistant-789',
-          extracted_title: 'Executive Virtual Assistant',
-          company: 'Remote Solutions Inc',
-          suggested_category: 'Virtual Assistant',
-          status: 'pending',
-          confidence_score: 0.90,
-          created_at: new Date().toISOString()
-        },
-        {
-          id: Date.now() + 4,
-          job_url: 'https://remoteok.io/customer-support-specialist-321',
-          extracted_title: 'Customer Support Specialist',
-          company: 'SupportHub',
-          suggested_category: 'Customer Service',
-          status: 'pending',
-          confidence_score: 0.80,
-          created_at: new Date().toISOString()
-        },
-        {
-          id: Date.now() + 5,
-          job_url: 'https://indeed.com/marketing-manager-654',
-          extracted_title: 'Digital Marketing Manager',
-          company: 'Growth Marketing Co',
-          suggested_category: 'Marketing',
-          status: 'pending',
-          confidence_score: 0.88,
-          created_at: new Date().toISOString()
-        }
-      ];
+      const response = await fetch(csvUrl);
+      const csvText = await response.text();
+      
+      const lines = csvText.split('\n');
+      const urls = lines
+        .slice(1)
+        .map(line => line.replace(/"/g, '').trim())
+        .filter(line => line && line.startsWith('http'));
 
-      // Add to pending jobs (NOT approved)
-      setPendingJobs(prev => [...prev, ...mockPendingJobs]);
+      console.log(`Found ${urls.length} URLs to import`);
+
+      let importCount = 0;
+      for (const url of urls) {
+        const title = extractJobTitle(url);
+        const modifier = extractModifier(url, title);
+        const category = categorizeJob(url, title);
+        const confidence = calculateConfidence(url, title, category);
+
+        // Check if job already exists
+        const { data: existingJob } = await supabase
+          .from('job_review_queue')
+          .select('id')
+          .eq('job_url', url)
+          .single();
+
+        if (!existingJob) {
+          const { error } = await supabase
+            .from('job_review_queue')
+            .insert({
+              job_url: url,
+              extracted_title: title,
+              modifier: modifier,
+              suggested_category: category,
+              confidence_score: confidence,
+              status: 'pending'
+            });
+          
+          if (!error) importCount++;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
+      console.log(`Import completed: ${importCount} new jobs added for review`);
       
-      console.log(`Import completed: ${mockPendingJobs.length} new jobs added for review`);
+      if (importCount > 0) {
+        sendWhatsAppNotification(importCount);
+      }
       
-      // Send WhatsApp notification about pending jobs
-      sendWhatsAppNotification(mockPendingJobs.length);
+      loadJobs();
       
     } catch (error) {
       console.error('Import error:', error);
@@ -282,7 +363,7 @@ const RemoteJobBoard: React.FC = () => {
 Quick actions:
 ✅ Review and approve quality jobs
 ❌ Reject poor quality jobs
-✏️ Edit titles/companies before approval
+✏️ Edit titles/modifiers before approval
 
 Time to review and get these jobs live!`;
 
@@ -310,7 +391,7 @@ Time to review and get these jobs live!`;
   const filteredJobs = cleanJobs.filter(job => {
     const matchesCategory = selectedCategory === 'All' || job.category === selectedCategory;
     const matchesSearch = job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         job.company.toLowerCase().includes(searchTerm.toLowerCase());
+                         job.modifier.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesCategory && matchesSearch;
   });
 
@@ -320,29 +401,45 @@ Time to review and get these jobs live!`;
   };
 
   const approveJob = async (jobId: number) => {
-    const job = pendingJobs.find(j => j.id === jobId);
-    if (job) {
-      // Move from pending to approved
-      setCleanJobs(prev => [...prev, {
-        id: job.id,
-        url: job.job_url,
-        title: job.extracted_title,
-        company: job.company,
-        category: job.suggested_category
-      }]);
-      setPendingJobs(prev => prev.filter(j => j.id !== jobId));
+    const { error } = await supabase
+      .from('job_review_queue')
+      .update({ 
+        status: 'approved',
+        approved_at: new Date().toISOString(),
+        approved_by: 'admin'
+      })
+      .eq('id', jobId);
+
+    if (!error) {
+      loadJobs();
     }
   };
 
   const rejectJob = async (jobId: number) => {
-    setPendingJobs(prev => prev.filter(j => j.id !== jobId));
+    const { error } = await supabase
+      .from('job_review_queue')
+      .update({ status: 'rejected' })
+      .eq('id', jobId);
+
+    if (!error) {
+      loadJobs();
+    }
   };
 
   const updateJob = async (updatedJob: PendingJob) => {
-    setPendingJobs(prev => 
-      prev.map(job => job.id === updatedJob.id ? updatedJob : job)
-    );
-    setEditingJob(null);
+    const { error } = await supabase
+      .from('job_review_queue')
+      .update({
+        extracted_title: updatedJob.extracted_title,
+        modifier: updatedJob.modifier,
+        suggested_category: updatedJob.suggested_category
+      })
+      .eq('id', updatedJob.id);
+
+    if (!error) {
+      setEditingJob(null);
+      loadJobs();
+    }
   };
 
   if (showAdmin) {
@@ -442,11 +539,10 @@ Time to review and get these jobs live!`;
                           />
                         </div>
                         <div style={{ marginBottom: '12px' }}>
-                          <label style={{ color: '#d7bc69', display: 'block', marginBottom: '4px', fontSize: isMobile ? '14px' : '16px' }}>Company:</label>
-                          <input
-                            type="text"
-                            value={editingJob.company}
-                            onChange={(e) => setEditingJob({...editingJob, company: e.target.value})}
+                          <label style={{ color: '#d7bc69', display: 'block', marginBottom: '4px', fontSize: isMobile ? '14px' : '16px' }}>Modifier:</label>
+                          <select
+                            value={editingJob.modifier}
+                            onChange={(e) => setEditingJob({...editingJob, modifier: e.target.value})}
                             style={{
                               width: '100%',
                               padding: '8px',
@@ -456,7 +552,11 @@ Time to review and get these jobs live!`;
                               color: '#d7bc69',
                               fontSize: isMobile ? '14px' : '16px'
                             }}
-                          />
+                          >
+                            {JOB_MODIFIERS.map(modifier => (
+                              <option key={modifier} value={modifier}>{modifier}</option>
+                            ))}
+                          </select>
                         </div>
                         <div style={{ marginBottom: '16px' }}>
                           <label style={{ color: '#d7bc69', display: 'block', marginBottom: '4px', fontSize: isMobile ? '14px' : '16px' }}>Category:</label>
@@ -516,9 +616,8 @@ Time to review and get these jobs live!`;
                       <div>
                         <div style={{ marginBottom: '16px' }}>
                           <h4 style={{ color: '#d7bc69', fontSize: isMobile ? '16px' : '18px', marginBottom: '4px' }}>
-                            {job.extracted_title}
+                            {job.extracted_title} ({job.modifier})
                           </h4>
-                          <p style={{ color: '#047857', marginBottom: '4px', fontSize: isMobile ? '14px' : '16px' }}>{job.company}</p>
                           <p style={{ color: '#6b7280', fontSize: isMobile ? '12px' : '14px' }}>Category: {job.suggested_category}</p>
                           <p style={{ color: '#6b7280', fontSize: isMobile ? '11px' : '12px' }}>
                             Confidence: {Math.round((job.confidence_score || 0) * 100)}%
@@ -685,26 +784,15 @@ Time to review and get these jobs live!`;
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 16px' }}>
           <div style={{ textAlign: 'center', marginBottom: isMobile ? '24px' : '48px' }}>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: isMobile ? '16px' : '24px' }}>
-              <div style={{
-                width: isMobile ? '60px' : '80px',
-                height: isMobile ? '60px' : '80px',
-                background: `linear-gradient(135deg, ${THEME_CONFIG.colors.emeraldDark}, ${THEME_CONFIG.colors.emeraldMedium})`,
-                borderRadius: '16px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                border: `2px solid ${THEME_CONFIG.colors.goldLight}`
-              }}>
-                <span style={{
-                  fontSize: isMobile ? '20px' : '24px',
-                  fontWeight: 'bold',
-                  background: `linear-gradient(135deg, ${THEME_CONFIG.colors.goldLight}, ${THEME_CONFIG.colors.goldMedium})`,
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                  backgroundClip: 'text'
-                }}>BP</span>
-              </div>
+              <img 
+                src="/logo192.png" 
+                alt="Borderless Plug Logo"
+                style={{
+                  width: isMobile ? '80px' : '120px',
+                  height: isMobile ? '80px' : '120px',
+                  objectFit: 'contain'
+                }}
+              />
             </div>
             
             <h1 style={{
@@ -734,7 +822,6 @@ Time to review and get these jobs live!`;
         margin: '0 auto', 
         padding: isMobile ? '16px' : '32px 16px'
       }}>
-        {/* Mobile: Single column layout */}
         <div style={{ 
           display: 'grid', 
           gridTemplateColumns: isMobile ? '1fr' : '400px 1fr', 
@@ -742,7 +829,6 @@ Time to review and get these jobs live!`;
           alignItems: 'start'
         }}>
           
-          {/* Sidebar - On mobile, this becomes a collapsible section */}
           <div style={{ 
             display: 'flex', 
             flexDirection: 'column', 
@@ -750,7 +836,6 @@ Time to review and get these jobs live!`;
             order: isMobile ? 2 : 1
           }}>
             
-            {/* Category Filter */}
             <div style={cardStyle}>
               <div 
                 onClick={() => setShowCategories(!showCategories)}
@@ -815,7 +900,6 @@ Time to review and get these jobs live!`;
               )}
             </div>
 
-            {/* Services - Stack vertically on mobile */}
             <div style={cardStyle}>
               <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
                 <Award size={24} color={THEME_CONFIG.colors.goldLight} style={{ marginRight: '12px' }} />
@@ -859,11 +943,9 @@ Time to review and get these jobs live!`;
             </div>
           </div>
 
-          {/* Main Content - Category Display */}
           <div style={{ minHeight: '600px', order: isMobile ? 1 : 2 }}>
             
             {selectedCategory === 'All' ? (
-              // Show category grid when "All" is selected
               <div>
                 <div style={{ ...cardStyle, marginBottom: isMobile ? '16px' : '24px', textAlign: 'center' }}>
                   <h2 style={{ 
@@ -969,7 +1051,6 @@ Time to review and get these jobs live!`;
                 </div>
               </div>
             ) : (
-              // Show jobs for selected category
               <div>
                 <div style={{ ...cardStyle, marginBottom: isMobile ? '16px' : '24px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1041,16 +1122,10 @@ Time to review and get these jobs live!`;
                                 fontSize: isMobile ? '16px' : '18px',
                                 fontWeight: 'bold', 
                                 color: THEME_CONFIG.colors.goldLight, 
-                                marginBottom: '4px'
+                                marginBottom: '8px'
                               }}>
-                                {job.title}
+                                {job.title} ({job.modifier})
                               </h3>
-                              <p style={{ 
-                                color: THEME_CONFIG.colors.emeraldLight, 
-                                fontWeight: '500',
-                                marginBottom: '8px',
-                                fontSize: isMobile ? '14px' : '16px'
-                              }}>{job.company}</p>
                               <div style={{ 
                                 display: 'flex', 
                                 alignItems: 'center', 
