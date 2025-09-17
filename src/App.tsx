@@ -540,7 +540,9 @@ Time to review and get these jobs live!`;
                         </div>
                         <div style={{ marginBottom: '12px' }}>
                           <label style={{ color: '#d7bc69', display: 'block', marginBottom: '4px', fontSize: isMobile ? '14px' : '16px' }}>Modifier:</label>
-                          <select
+                          <input
+                            type="text"
+                            list="modifier-options"
                             value={editingJob.modifier}
                             onChange={(e) => setEditingJob({...editingJob, modifier: e.target.value})}
                             style={{
@@ -552,11 +554,12 @@ Time to review and get these jobs live!`;
                               color: '#d7bc69',
                               fontSize: isMobile ? '14px' : '16px'
                             }}
-                          >
+                          />
+                          <datalist id="modifier-options">
                             {JOB_MODIFIERS.map(modifier => (
                               <option key={modifier} value={modifier}>{modifier}</option>
                             ))}
-                          </select>
+                          </datalist>
                         </div>
                         <div style={{ marginBottom: '16px' }}>
                           <label style={{ color: '#d7bc69', display: 'block', marginBottom: '4px', fontSize: isMobile ? '14px' : '16px' }}>Category:</label>
