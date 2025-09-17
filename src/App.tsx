@@ -2,6 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Search, Filter, Briefcase, Users, MessageCircle, Star, ArrowRight, Phone, RefreshCw, Globe, Award, TrendingUp, MapPin, Clock, ExternalLink, CheckCircle } from 'lucide-react';
 import MobileAdminPanel from './MobileAdminPanel';
 import { useJobMonitoring, JobIssueDetector } from './WhatsAppJobMonitor';
+import JobManager, { useJobs } from './JobManager';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient('https://aljnetqtbajiudehmzdv.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFsam5ldHF0YmFqaXVkZWhtemR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwMTY2MDksImV4cCI6MjA3MzU5MjYwOX0.gDp3q-v5BKcHk_sIuB3AniKilUOoYisqyh8zJqJ2HaA');
 
 // ============================================
 // TYPE DEFINITIONS
@@ -43,67 +47,16 @@ interface IconComponentProps {
 // ============================================
 const THEME_CONFIG = {
   colors: {
-    emeraldDark: '#012920',    // Your exact emerald
+    emeraldDark: '#012920',
     emeraldMedium: '#065f46', 
     emeraldLight: '#047857',
-    goldLight: '#d7bc69',     // Your exact gold
+    goldLight: '#d7bc69',
     goldMedium: '#eab308',
     goldDark: '#a16207',
     white: '#ffffff',
     gray: '#6b7280',
     grayLight: '#f3f4f6'
   } as ThemeColors
-};
-
-// ============================================
-// GOOGLE SHEETS CONFIGURATION
-// ============================================
-const GOOGLE_SHEETS_CONFIG = {
-  SHEET_ID: '1imnNLvoNw_LZfI0pb18a0D9ktW10ixEdA7tOXOjNqRU',
-  RANGE: 'A:A',
-  API_KEY: null
-};
-
-// ============================================
-// FIXED GOOGLE SHEETS DATA FETCHER - NO DUMMY DATA
-// ============================================
-const fetchJobsFromGoogleSheets = async (): Promise<string[]> => {
-  try {
-    const sheetId = GOOGLE_SHEETS_CONFIG.SHEET_ID;
-    
-    // ✅ REMOVED THE DUMMY DATA CHECK - Your real sheet will now work
-    // The problematic check that returned dummy data has been eliminated
-    
-    const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&range=A:A`;
-    
-    console.log('🔄 Fetching jobs from Google Sheets...');
-    console.log(`📊 Using Sheet ID: ${sheetId}`);
-    
-    const response = await fetch(csvUrl);
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    
-    const csvText = await response.text();
-    console.log('📄 Raw CSV received:', csvText.substring(0, 200) + '...');
-    
-    const lines = csvText.split('\n');
-    const jobUrls = lines
-      .slice(1)
-      .map(line => line.replace(/"/g, '').trim())
-      .filter(line => line && line.startsWith('http'));
-    
-    console.log(`✅ Successfully loaded ${jobUrls.length} jobs from Google Sheets!`);
-    return jobUrls;
-    
-  } catch (error) {
-    console.error('❌ Error fetching from Google Sheets:', error);
-    console.log('🚨 No fallback data - check your Google Sheets configuration');
-    
-    // Return empty array instead of dummy data
-    return [];
-  }
 };
 
 // ============================================
@@ -153,44 +106,6 @@ const JOB_CATEGORIES: Record<string, CategoryData> = {
 };
 
 // ============================================
-// AUTO-CATEGORIZATION FUNCTION
-// ============================================
-const categorizeJob = (jobUrl: string, jobTitle: string = ''): string => {
-  const urlLower = jobUrl.toLowerCase();
-  const titleLower = jobTitle.toLowerCase();
-  const combinedText = `${urlLower} ${titleLower}`;
-  
-  // Check H.R. first
-  const hrKeywords = ['hr', 'human resources', 'recruiting', 'recruiter', 'talent', 'hiring', 'people operations', 'people', 'talent acquisition', 'hr manager', 'hr-manager', 'hrmanager'];
-  for (const keyword of hrKeywords) {
-    if (combinedText.includes(keyword)) {
-      return 'H.R.';
-    }
-  }
-  
-  // Check Sales
-  const salesKeywords = ['sales', 'business development', 'bdr', 'sdr', 'account executive', 'account manager', 'business development rep', 'sales development rep', 'revenue', 'partnerships', 'lead generation', 'sales development representative'];
-  for (const keyword of salesKeywords) {
-    if (combinedText.includes(keyword)) {
-      return 'Sales';
-    }
-  }
-  
-  // Check other categories
-  for (const [category, data] of Object.entries(JOB_CATEGORIES)) {
-    if (category === 'H.R.' || category === 'Sales') continue;
-    
-    for (const keyword of data.keywords) {
-      if (combinedText.includes(keyword)) {
-        return category;
-      }
-    }
-  }
-  
-  return 'Operations';
-};
-
-// ============================================
 // ICON COMPONENT MAPPER
 // ============================================
 const IconComponent: React.FC<IconComponentProps> = ({ name, size = 20, color = '#000' }) => {
@@ -213,115 +128,80 @@ const IconComponent: React.FC<IconComponentProps> = ({ name, size = 20, color = 
 // MAIN COMPONENT
 // ============================================
 const RemoteJobBoard: React.FC = () => {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [cleanJobs, setCleanJobs] = useState<Job[]>([]); // Only approved jobs for public
-  const [problematicJobs, setProblematicJobs] = useState<Job[]>([]); // Jobs needing review
+  // Keep existing state
+  const [cleanJobs, setCleanJobs] = useState<Job[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [showAdmin, setShowAdmin] = useState<boolean>(false);
-
-  // WhatsApp monitoring hook
-  const { processNewJobs, sendNotificationForJob } = useJobMonitoring();
-
-  useEffect(() => {
-    loadJobs();
-  }, []);
-
-  // Admin password protection
-  useEffect(() => {
-    const isAdmin = window.location.pathname === '/admin';
-    if (isAdmin) {
-      const password = prompt('Enter admin password:');
-      if (password !== 'Border@Plug92') {
-        alert('Access denied');
-        window.location.href = '/';
-        return;
-      }
-      setShowAdmin(true);
-    }
-  }, []);
+  const [loading, setLoading] = useState<boolean>(true);
 
   const loadJobs = async (): Promise<void> => {
     setLoading(true);
-    console.log('🚀 Loading jobs from Google Sheets...');
+    console.log('Loading from Supabase...');
     
-    const jobUrls = await fetchJobsFromGoogleSheets();
-    
-    const categorizedJobs: Job[] = jobUrls.map((url, index) => {
-      const title = extractJobTitle(url);
-      return {
-        id: index + 1,
-        url: url,
-        category: categorizeJob(url, title),
-        title: title,
-        company: extractCompany(url)
-      };
-    });
-    
-    // Separate clean jobs from problematic ones
-    const { cleanJobs: approvedJobs, problematicJobs: flaggedJobs } = filterJobs(categorizedJobs);
-    
-    setJobs(categorizedJobs); // All jobs (for admin)
-    setCleanJobs(approvedJobs); // Only clean jobs (for public)
-    setProblematicJobs(flaggedJobs); // Store problematic jobs for admin
-    setLastUpdated(new Date());
-    setLoading(false);
-    
-    console.log(`✅ Loaded ${categorizedJobs.length} total jobs`);
-    console.log(`👀 ${approvedJobs.length} clean jobs shown to public`);
-    console.log(`🚨 ${flaggedJobs.length} problematic jobs sent to admin`);
+    const { data, error } = await supabase
+      .from('job_review_queue')
+      .select('*')
+      .eq('status', 'approved');
 
-    // ONLY send batch WhatsApp notification if we're in admin mode
-    // NEVER send notifications to regular users visiting the site
-    if (flaggedJobs.length > 0 && window.location.pathname === '/admin') {
-      // Create a single batch summary message
-      const batchMessage = `🚨 BORDERLESS PLUG BATCH ALERT
-
-📊 SUMMARY:
-• ${flaggedJobs.length} jobs need review
-• ${flaggedJobs.filter(job => JobIssueDetector.detectIssues(job).some(issue => issue.severity === 'HIGH')).length} high priority issues
-
-🔍 TOP ISSUES:
-${flaggedJobs.slice(0, 5).map((job, index) => {
-  const issues = JobIssueDetector.detectIssues(job);
-  const mainIssue = issues[0]?.reason || 'Needs review';
-  return `${index + 1}. "${job.title}" - ${mainIssue}`;
-}).join('\n')}
-${flaggedJobs.length > 5 ? `... and ${flaggedJobs.length - 5} more` : ''}
-
-💻 REVIEW ALL: ${window.location.origin}/admin
-
-Quick Actions:
-✅ Reply "REVIEWING" when you start
-📝 Reply "DONE" when finished
-🔄 Reply "REFRESH" for new batch`;
-
-      // Open ONE WhatsApp tab with batch summary ONLY for admin
-      const encodedMessage = encodeURIComponent(batchMessage);
-      const whatsappUrl = `https://wa.me/27679245039?text=${encodedMessage}`;
-      window.open(whatsappUrl, '_blank');
-      
-      console.log(`📱 Sent batch notification for ${flaggedJobs.length} problematic jobs`);
+    if (data) {
+      const jobs = data.map((job: any) => ({
+        id: job.id,
+        url: job.job_url,
+        title: job.extracted_title || 'Job',
+        company: job.company || 'Company',
+        category: job.suggested_category || 'Operations'
+      }));
+      setCleanJobs(jobs);
+      setLastUpdated(new Date());
     }
+    
+    setLoading(false);
   };
 
-  // Filter out problematic jobs from public view
-  const filterJobs = (allJobs: Job[]) => {
-    const cleanJobs: Job[] = [];
-    const problematicJobs: Job[] = [];
+  const importFromGoogleSheets = async () => {
+    console.log('Starting Google Sheets import...');
+    
+    try {
+      const sheetId = '1imnNLvoNw_LZfI0pb18a0D9ktW10ixEdA7tOXOjNqRU';
+      const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&range=A:A`;
+      
+      const response = await fetch(csvUrl);
+      const csvText = await response.text();
+      
+      const lines = csvText.split('\n');
+      const urls = lines
+        .slice(1)
+        .map(line => line.replace(/"/g, '').trim())
+        .filter(line => line && line.startsWith('http'));
 
-    allJobs.forEach(job => {
-      const issues = JobIssueDetector.detectIssues(job);
-      if (issues.length > 0) {
-        problematicJobs.push(job);
-      } else {
-        cleanJobs.push(job);
+      console.log(`Found ${urls.length} URLs to import`);
+
+      for (const url of urls) {
+        const title = extractJobTitle(url);
+        const company = extractCompany(url);
+        const category = categorizeJob(url, title);
+
+        await supabase
+          .from('job_review_queue')
+          .insert({
+            job_url: url,
+            extracted_title: title,
+            company: company,
+            suggested_category: category,
+            status: 'approved'
+          });
+        
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
-    });
 
-    return { cleanJobs, problematicJobs };
+      console.log('Import completed');
+      loadJobs(); // Refresh the jobs list
+      
+    } catch (error) {
+      console.error('Import error:', error);
+    }
   };
 
   const extractJobTitle = (url: string): string => {
@@ -335,19 +215,8 @@ Quick Actions:
     if (url.includes('weworkremotely')) return 'WeWorkRemotely';
     if (url.includes('flexjobs')) return 'FlexJobs';
     if (url.includes('remoteok')) return 'RemoteOK';
-    if (url.includes('angel.co')) return 'AngelList';
-    if (url.includes('upwork')) return 'Upwork';
     if (url.includes('indeed')) return 'Indeed';
     if (url.includes('linkedin')) return 'LinkedIn';
-    if (url.includes('glassdoor')) return 'Glassdoor';
-    if (url.includes('ziprecruiter')) return 'ZipRecruiter';
-    if (url.includes('monster')) return 'Monster';
-    if (url.includes('careerbuilder')) return 'CareerBuilder';
-    if (url.includes('dice')) return 'Dice';
-    if (url.includes('stackoverflow')) return 'Stack Overflow';
-    if (url.includes('github')) return 'GitHub Jobs';
-    if (url.includes('freelancer')) return 'Freelancer';
-    if (url.includes('fiverr')) return 'Fiverr';
     
     try {
       const domain = new URL(url).hostname.replace('www.', '');
@@ -357,7 +226,39 @@ Quick Actions:
     }
   };
 
-  // Use CLEAN jobs for public filtering (not all jobs)
+  const categorizeJob = (url: string, title: string): string => {
+    const urlLower = url.toLowerCase();
+    const titleLower = title.toLowerCase();
+    const combinedText = `${urlLower} ${titleLower}`;
+    
+    if (combinedText.includes('developer') || combinedText.includes('engineer') || combinedText.includes('programming')) return 'I.T.';
+    if (combinedText.includes('sales') || combinedText.includes('business development')) return 'Sales';
+    if (combinedText.includes('assistant') || combinedText.includes('admin')) return 'Virtual Assistant';
+    if (combinedText.includes('customer') || combinedText.includes('support')) return 'Customer Service';
+    if (combinedText.includes('hr') || combinedText.includes('recruiting')) return 'H.R.';
+    if (combinedText.includes('design') || combinedText.includes('creative')) return 'Design';
+    if (combinedText.includes('marketing') || combinedText.includes('social media')) return 'Marketing';
+    
+    return 'Operations';
+  };
+
+  useEffect(() => {
+    loadJobs();
+  }, []);
+
+  useEffect(() => {
+    const isAdmin = window.location.pathname === '/admin';
+    if (isAdmin) {
+      const password = prompt('Enter admin password:');
+      if (password !== 'Border@Plug92') {
+        alert('Access denied');
+        window.location.href = '/';
+        return;
+      }
+      setShowAdmin(true);
+    }
+  }, []);
+
   const filteredJobs = cleanJobs.filter(job => {
     const matchesCategory = selectedCategory === 'All' || job.category === selectedCategory;
     const matchesSearch = job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -366,42 +267,58 @@ Quick Actions:
   });
 
   const getCategoryCount = (category: string): number => {
-    if (category === 'All') return cleanJobs.length; // Count only clean jobs
+    if (category === 'All') return cleanJobs.length;
     return cleanJobs.filter(job => job.category === category).length;
   };
 
-  // Admin panel check - pass real problematic jobs
   if (showAdmin) {
-    return <MobileAdminPanel problematicJobs={problematicJobs} />;
+    return (
+      <div>
+        <div style={{ 
+          padding: '20px', 
+          background: 'linear-gradient(135deg, #012920, #065f46)', 
+          margin: '20px',
+          borderRadius: '12px',
+          color: '#d7bc69'
+        }}>
+          <h3 style={{ marginBottom: '16px', fontSize: '20px' }}>Admin Controls</h3>
+          
+          <button 
+            onClick={importFromGoogleSheets}
+            style={{
+              padding: '12px 24px',
+              background: 'linear-gradient(135deg, #d7bc69, #eab308)',
+              color: '#012920',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              marginRight: '12px',
+              fontWeight: 'bold',
+              fontSize: '14px'
+            }}
+          >
+            Import from Google Sheets
+          </button>
+          
+          <div style={{ marginTop: '16px' }}>
+            <div style={{ 
+              background: 'rgba(215, 188, 105, 0.1)', 
+              padding: '12px', 
+              borderRadius: '8px',
+              border: '1px solid rgba(215, 188, 105, 0.3)'
+            }}>
+              <strong>Jobs in Database:</strong> {cleanJobs.length}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
-  // ============================================
-  // STYLES
-  // ============================================
+  // Styles
   const containerStyle: React.CSSProperties = {
     minHeight: '100vh',
     background: `linear-gradient(135deg, ${THEME_CONFIG.colors.emeraldDark} 0%, ${THEME_CONFIG.colors.emeraldMedium} 50%, ${THEME_CONFIG.colors.emeraldDark} 100%)`
-  };
-
-  const headerStyle: React.CSSProperties = {
-    background: `rgba(1, 41, 32, 0.95)`,
-    backdropFilter: 'blur(10px)',
-    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-    borderBottom: `2px solid ${THEME_CONFIG.colors.goldLight}`,
-    padding: '2rem 0'
-  };
-
-  const logoStyle: React.CSSProperties = {
-    width: '80px',
-    height: '80px',
-    background: `linear-gradient(135deg, ${THEME_CONFIG.colors.emeraldDark}, ${THEME_CONFIG.colors.emeraldMedium})`,
-    borderRadius: '16px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-    border: `2px solid ${THEME_CONFIG.colors.goldLight}`,
-    position: 'relative' as const
   };
 
   const cardStyle: React.CSSProperties = {
@@ -451,23 +368,35 @@ Quick Actions:
 
   return (
     <div style={containerStyle}>
-      {/* Header Section */}
-      <header style={headerStyle}>
+      <header style={{
+        background: 'rgba(1, 41, 32, 0.95)',
+        backdropFilter: 'blur(10px)',
+        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+        borderBottom: `2px solid ${THEME_CONFIG.colors.goldLight}`,
+        padding: '2rem 0'
+      }}>
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 16px' }}>
           <div style={{ textAlign: 'center', marginBottom: '48px' }}>
-            {/* Logo Section */}
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
-              <div style={{ position: 'relative' }}>
-                <div style={logoStyle}>
-                  <span style={{
-                    fontSize: '24px',
-                    fontWeight: 'bold',
-                    background: `linear-gradient(135deg, ${THEME_CONFIG.colors.goldLight}, ${THEME_CONFIG.colors.goldMedium})`,
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                    backgroundClip: 'text'
-                  }}>BP</span>
-                </div>
+              <div style={{
+                width: '80px',
+                height: '80px',
+                background: `linear-gradient(135deg, ${THEME_CONFIG.colors.emeraldDark}, ${THEME_CONFIG.colors.emeraldMedium})`,
+                borderRadius: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                border: `2px solid ${THEME_CONFIG.colors.goldLight}`
+              }}>
+                <span style={{
+                  fontSize: '24px',
+                  fontWeight: 'bold',
+                  background: `linear-gradient(135deg, ${THEME_CONFIG.colors.goldLight}, ${THEME_CONFIG.colors.goldMedium})`,
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  backgroundClip: 'text'
+                }}>BP</span>
               </div>
             </div>
             
@@ -475,39 +404,20 @@ Quick Actions:
               fontSize: '48px',
               fontWeight: '900',
               color: THEME_CONFIG.colors.goldLight,
-              marginBottom: '12px',
-              textAlign: 'center' as const
+              marginBottom: '12px'
             }}>Borderless Plug</h1>
             <p style={{
               fontSize: '20px',
               color: THEME_CONFIG.colors.goldLight,
               marginBottom: '12px',
-              fontWeight: '600',
-              textAlign: 'center' as const
+              fontWeight: '600'
             }}>Breaking Borders Building Careers</p>
             <p style={{
               fontSize: '18px',
               color: THEME_CONFIG.colors.emeraldLight,
               fontStyle: 'italic',
-              fontWeight: '500',
-              textAlign: 'center' as const
+              fontWeight: '500'
             }}>"Find jobs freely, stand out professionally"</p>
-            
-            {/* Stats Bar */}
-            <div style={{ 
-              display: 'flex', 
-              justifyContent: 'center', 
-              alignItems: 'center', 
-              gap: '32px', 
-              marginTop: '32px', 
-              fontSize: '14px', 
-              color: THEME_CONFIG.colors.goldLight 
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Filter size={20} color={THEME_CONFIG.colors.goldLight} />
-                <span style={{ fontWeight: '500' }}>8 Categories</span>
-              </div>
-            </div>
           </div>
         </div>
       </header>
@@ -515,10 +425,7 @@ Quick Actions:
       <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '32px 16px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '400px 1fr', gap: '32px', alignItems: 'start' }}>
           
-          {/* Sidebar - Categories & Services */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            
-            {/* Category Filter */}
             <div style={cardStyle}>
               <h3 style={{ 
                 fontSize: '18px', 
@@ -535,20 +442,6 @@ Quick Actions:
               <button
                 onClick={() => setSelectedCategory('All')}
                 style={categoryButtonStyle(selectedCategory === 'All')}
-                onMouseEnter={(e) => {
-                  if (selectedCategory !== 'All') {
-                    e.currentTarget.style.background = `linear-gradient(135deg, ${THEME_CONFIG.colors.goldLight}, ${THEME_CONFIG.colors.goldMedium})`;
-                    e.currentTarget.style.color = THEME_CONFIG.colors.emeraldDark;
-                    e.currentTarget.style.boxShadow = '0 10px 25px -5px rgba(0, 0, 0, 0.2)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (selectedCategory !== 'All') {
-                    e.currentTarget.style.background = 'transparent';
-                    e.currentTarget.style.color = THEME_CONFIG.colors.goldLight;
-                    e.currentTarget.style.boxShadow = 'none';
-                  }
-                }}
               >
                 <div style={{ display: 'flex', alignItems: 'center' }}>
                   <Star size={20} style={{ marginRight: '12px' }} />
@@ -562,20 +455,6 @@ Quick Actions:
                   key={category}
                   onClick={() => setSelectedCategory(category)}
                   style={categoryButtonStyle(selectedCategory === category)}
-                  onMouseEnter={(e) => {
-                    if (selectedCategory !== category) {
-                      e.currentTarget.style.background = `linear-gradient(135deg, ${THEME_CONFIG.colors.goldLight}, ${THEME_CONFIG.colors.goldMedium})`;
-                      e.currentTarget.style.color = THEME_CONFIG.colors.emeraldDark;
-                      e.currentTarget.style.boxShadow = '0 10px 25px -5px rgba(0, 0, 0, 0.2)';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (selectedCategory !== category) {
-                      e.currentTarget.style.background = 'transparent';
-                      e.currentTarget.style.color = THEME_CONFIG.colors.goldLight;
-                      e.currentTarget.style.boxShadow = 'none';
-                    }
-                  }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center' }}>
                     <IconComponent name={data.icon} size={20} color={selectedCategory === category ? THEME_CONFIG.colors.emeraldDark : THEME_CONFIG.colors.goldLight} />
@@ -586,7 +465,6 @@ Quick Actions:
               ))}
             </div>
 
-            {/* Resume & LinkedIn Services */}
             <div style={cardStyle}>
               <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
                 <Award size={24} color={THEME_CONFIG.colors.goldLight} style={{ marginRight: '12px' }} />
@@ -594,20 +472,9 @@ Quick Actions:
               </div>
               <p style={{ 
                 fontSize: '14px', 
-                marginBottom: '12px', 
-                color: THEME_CONFIG.colors.goldLight, 
-                fontStyle: 'italic', 
-                fontWeight: '500' 
-              }}>
-                "Let your resume and profile do the talking"
-              </p>
-              <p style={{ 
-                fontSize: '14px', 
                 marginBottom: '24px', 
                 color: THEME_CONFIG.colors.goldLight 
-              }}>
-                Professional resume writing and LinkedIn optimization that gets results.
-              </p>
+              }}>Professional resume writing and LinkedIn optimization that gets results.</p>
               <a
                 href="https://wa.me/27844936238"
                 target="_blank"
@@ -619,7 +486,6 @@ Quick Actions:
               </a>
             </div>
 
-            {/* Career Coaching Services */}
             <div style={cardStyle}>
               <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
                 <TrendingUp size={24} color={THEME_CONFIG.colors.goldLight} style={{ marginRight: '12px' }} />
@@ -627,31 +493,9 @@ Quick Actions:
               </div>
               <p style={{ 
                 fontSize: '14px', 
-                marginBottom: '12px', 
-                color: THEME_CONFIG.colors.goldLight, 
-                fontStyle: 'italic', 
-                fontWeight: '500' 
-              }}>
-                "Transform your career trajectory"
-              </p>
-              <div style={{ fontSize: '14px', marginBottom: '24px', color: THEME_CONFIG.colors.goldLight }}>
-                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
-                  <CheckCircle size={16} color={THEME_CONFIG.colors.goldLight} style={{ marginRight: '8px' }} />
-                  <span>Graduate career guidance</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
-                  <CheckCircle size={16} color={THEME_CONFIG.colors.goldLight} style={{ marginRight: '8px' }} />
-                  <span>Sales performance coaching</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
-                  <CheckCircle size={16} color={THEME_CONFIG.colors.goldLight} style={{ marginRight: '8px' }} />
-                  <span>Remote career transitions</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                  <CheckCircle size={16} color={THEME_CONFIG.colors.goldLight} style={{ marginRight: '8px' }} />
-                  <span>Strategic skill development</span>
-                </div>
-              </div>
+                marginBottom: '24px', 
+                color: THEME_CONFIG.colors.goldLight 
+              }}>Expert guidance for career growth and transitions.</p>
               <a
                 href="https://wa.me/27679245039"
                 target="_blank"
@@ -664,10 +508,7 @@ Quick Actions:
             </div>
           </div>
 
-          {/* Main Content - CLEAN Job Listings Only */}
           <div style={{ minHeight: '600px' }}>
-            
-            {/* Search Bar */}
             <div style={{ ...cardStyle, marginBottom: '24px' }}>
               <div style={{ position: 'relative' }}>
                 <Search size={20} color={THEME_CONFIG.colors.goldLight} style={{ 
@@ -707,10 +548,7 @@ Quick Actions:
               </div>
             </div>
 
-            {/* Job Listings - CLEAN JOBS ONLY */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              
-              {/* Loading State */}
               {loading && (
                 <div style={{ padding: '64px', textAlign: 'center' }}>
                   <RefreshCw size={48} color={THEME_CONFIG.colors.goldLight} style={{ 
@@ -725,12 +563,11 @@ Quick Actions:
                     marginBottom: '12px' 
                   }}>Loading Jobs...</h3>
                   <p style={{ color: THEME_CONFIG.colors.emeraldLight }}>
-                    Fetching the latest remote opportunities from your Google Sheets
+                    Fetching the latest remote opportunities from Supabase
                   </p>
                 </div>
               )}
 
-              {/* Clean Job Cards - NO ALERT BANNERS */}
               {!loading && filteredJobs.map(job => {
                 const categoryData = JOB_CATEGORIES[job.category];
                 
@@ -745,8 +582,8 @@ Quick Actions:
                           display: 'flex', 
                           alignItems: 'center', 
                           justifyContent: 'center',
-                          background: `rgba(215, 188, 105, 0.2)`,
-                          border: `1px solid rgba(215, 188, 105, 0.3)`,
+                          background: 'rgba(215, 188, 105, 0.2)',
+                          border: '1px solid rgba(215, 188, 105, 0.3)',
                           transition: 'all 0.2s',
                           flexShrink: 0
                         }}>
@@ -778,7 +615,7 @@ Quick Actions:
                             alignItems: 'center', 
                             gap: '16px', 
                             fontSize: '14px', 
-                            color: `rgba(215, 188, 105, 0.7)`,
+                            color: 'rgba(215, 188, 105, 0.7)',
                             flexWrap: 'wrap'
                           }}>
                             <div style={{ 
@@ -811,14 +648,6 @@ Quick Actions:
                           minWidth: '120px',
                           textAlign: 'center' as const
                         }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.transform = 'translateY(-2px)';
-                          e.currentTarget.style.boxShadow = '0 15px 30px -5px rgba(0, 0, 0, 0.2)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.transform = 'translateY(0px)';
-                          e.currentTarget.style.boxShadow = '0 10px 25px -5px rgba(0, 0, 0, 0.1)';
-                        }}
                       >
                         Apply Now
                         <ExternalLink size={16} style={{ marginLeft: '8px' }} />
@@ -828,10 +657,9 @@ Quick Actions:
                 );
               })}
 
-              {/* Empty State */}
               {!loading && filteredJobs.length === 0 && (
                 <div style={{ padding: '64px', textAlign: 'center' }}>
-                  <Briefcase size={64} color={`rgba(215, 188, 105, 0.5)`} style={{ 
+                  <Briefcase size={64} color="rgba(215, 188, 105, 0.5)" style={{ 
                     margin: '0 auto 24px', 
                     display: 'block' 
                   }} />
@@ -841,149 +669,22 @@ Quick Actions:
                     color: THEME_CONFIG.colors.goldLight, 
                     marginBottom: '12px' 
                   }}>No jobs found</h3>
-                  <p style={{ color: THEME_CONFIG.colors.emeraldLight, marginBottom: '24px' }}>
+                  <p style={{ color: THEME_CONFIG.colors.emeraldLight }}>
                     {searchTerm 
-                      ? `No jobs match "${searchTerm}" in ${selectedCategory === 'All' ? 'any category' : selectedCategory}`
-                      : `No jobs available in ${selectedCategory === 'All' ? 'any category' : selectedCategory}`
-                    }
+                      ? `No jobs match "${searchTerm}"` 
+                      : 'No jobs available'}
                   </p>
-                  {(searchTerm || selectedCategory !== 'All') && (
-                    <button
-                      onClick={() => {
-                        setSearchTerm('');
-                        setSelectedCategory('All');
-                      }}
-                      style={{
-                        ...buttonStyle,
-                        background: 'transparent',
-                        color: THEME_CONFIG.colors.goldLight,
-                        border: `1px solid ${THEME_CONFIG.colors.goldLight}`
-                      }}
-                    >
-                      <RefreshCw size={16} style={{ marginRight: '8px' }} />
-                      Clear Filters
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Results Summary */}
-              {!loading && filteredJobs.length > 0 && (
-                <div style={{ 
-                  textAlign: 'center', 
-                  padding: '24px', 
-                  color: THEME_CONFIG.colors.emeraldLight,
-                  fontSize: '14px'
-                }}>
-                  Showing {filteredJobs.length} job{filteredJobs.length !== 1 ? 's' : ''} 
-                  {selectedCategory !== 'All' && ` in ${selectedCategory}`}
-                  {searchTerm && ` matching "${searchTerm}"`}
-                  {lastUpdated && (
-                    <div style={{ marginTop: '8px', fontSize: '12px', opacity: 0.7 }}>
-                      Last updated: {lastUpdated.toLocaleTimeString()}
-                    </div>
-                  )}
                 </div>
               )}
             </div>
           </div>
-
         </div>
       </div>
 
-      {/* Footer with Services Highlight */}
-      <footer style={{ 
-        background: `linear-gradient(135deg, ${THEME_CONFIG.colors.emeraldDark}, ${THEME_CONFIG.colors.emeraldMedium})`, 
-        color: THEME_CONFIG.colors.white, 
-        padding: '64px 0' 
-      }}>
-        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 16px', textAlign: 'center' }}>
-          <h2 style={{ 
-            fontSize: '32px', 
-            fontWeight: 'bold', 
-            marginBottom: '24px', 
-            color: THEME_CONFIG.colors.goldLight 
-          }}>Ready to Get Plugged In to Borderless Success?</h2>
-          <p style={{ 
-            color: THEME_CONFIG.colors.emeraldLight, 
-            marginBottom: '48px', 
-            maxWidth: '768px', 
-            margin: '0 auto 48px', 
-            fontSize: '18px' 
-          }}>
-            Don't just apply to jobs - get the complete Borderless Plug experience! Professional resume and LinkedIn optimization, plus expert career coaching to accelerate your remote success!
-          </p>
-          
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: '1fr 1fr', 
-            gap: '32px', 
-            maxWidth: '1024px', 
-            margin: '0 auto' 
-          }}>
-            <div style={cardStyle}>
-              <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
-                <Award size={32} color={THEME_CONFIG.colors.goldLight} style={{ marginRight: '12px' }} />
-                <h3 style={{ fontSize: '20px', fontWeight: 'bold', color: THEME_CONFIG.colors.goldLight }}>Resume & LinkedIn Services</h3>
-              </div>
-              <p style={{ 
-                fontSize: '14px', 
-                marginBottom: '24px', 
-                color: THEME_CONFIG.colors.emeraldLight 
-              }}>Professional resume writing and LinkedIn optimization</p>
-              <a
-                href="https://wa.me/27844936238"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={buttonStyle}
-              >
-                <Phone size={16} style={{ marginRight: '8px' }} />
-                +27 84 493 6238
-              </a>
-            </div>
-            
-            <div style={cardStyle}>
-              <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
-                <TrendingUp size={32} color={THEME_CONFIG.colors.goldLight} style={{ marginRight: '12px' }} />
-                <h3 style={{ fontSize: '20px', fontWeight: 'bold', color: THEME_CONFIG.colors.goldLight }}>Career Coaching</h3>
-              </div>
-              <p style={{ 
-                fontSize: '14px', 
-                marginBottom: '24px', 
-                color: THEME_CONFIG.colors.emeraldLight 
-              }}>Expert guidance for career growth and transitions</p>
-              <a
-                href="https://wa.me/27679245039"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={buttonStyle}
-              >
-                <Phone size={16} style={{ marginRight: '8px' }} />
-                +27 67 924 5039
-              </a>
-            </div>
-          </div>
-        </div>
-      </footer>
-
-      {/* CSS Animations */}
       <style>{`
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
-        }
-        
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-        
-        button:hover {
-          transform: translateY(-2px);
-        }
-        
-        a:hover {
-          transform: translateY(-2px);
         }
       `}</style>
     </div>
