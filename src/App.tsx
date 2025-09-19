@@ -283,12 +283,12 @@ const RemoteJobBoard: React.FC = () => {
   };
 
   const calculateConfidence = (url: string, title: string, category: string): number => {
-    let confidence = 0.5;
-    if (url.includes('remote.co') || url.includes('weworkremotely')) confidence += 0.3;
-    if (url.includes('indeed') || url.includes('linkedin')) confidence += 0.2;
-    if (title.length > 10) confidence += 0.1;
-    if (title.includes('Senior') || title.includes('Lead')) confidence += 0.1;
-    return Math.min(confidence, 1.0);
+    let confidence = 50; // Start with 50 instead of 0.5
+    if (url.includes('remote.co') || url.includes('weworkremotely')) confidence += 30;
+    if (url.includes('indeed') || url.includes('linkedin')) confidence += 20;
+    if (title.length > 10) confidence += 10;
+    if (title.includes('Senior') || title.includes('Lead')) confidence += 10;
+    return Math.min(confidence, 100); // Cap at 100 instead of 1.0
   };
 
   const importFromGoogleSheets = async () => {
